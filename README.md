@@ -37,7 +37,7 @@ pip install requests pandas numpy scikit-learn matplotlib plotly networkx
 
 ## Licencia
 
-Este proyecto está bajo la Licencia MIT. Consulte el archivo [LICENSE](LICENSE) para obtener más detalles.
+Este proyecto está bajo la Licencia MIT. Consulte el archivo [LICENSE](LICENSE.txt) para obtener más detalles.
 
 ---
 
