@@ -8,6 +8,8 @@ import os
 import matplotlib.pyplot as plt
 import numpy as np
 import plotly.graph_objects as go
+import matplotlib.cm as cm
+import plotly.graph_objs as go
 import networkx as nx
 
 # Nombre del archivo de caché
@@ -191,27 +193,34 @@ def threshold_similarity_matrix(similarity_matrix, threshold):
     binary_matrix[similarity_matrix > threshold] = 1
     return binary_matrix
 
-def plot_binary_matrix_networkx(binary, red_count=60, blue_count=60, green_count=60):
+def plot_binary_matrix_networkx(binary, df, queries):
     """
     Visualiza una matriz binaria como un gráfico de red utilizando NetworkX.
-
+    
     Args:
         binary (array): Matriz binaria.
-        red_count (int): Cantidad de nodos rojos.
-        blue_count (int): Cantidad de nodos azules.
-        green_count (int): Cantidad de nodos verdes.
+        df (DataFrame): DataFrame con registros de artículos académicos.
+        queries (dict): Diccionario de consultas con la cantidad de resultados deseados.
     """
-    threshold = 0.5
-    binary[binary < threshold] = 0
-    binary[binary >= threshold] = 1
+    # Generar colores
+    n_queries = len(queries)
+    colors = cm.rainbow(np.linspace(0, 1, n_queries))
+    
+    # Asignar colores a los nodos
+    node_colors = []
+    current_index = 0
+    for i, (query, count) in enumerate(queries.items()):
+        node_colors += [colors[i]] * count
+        current_index += count
+
+    # Crear y visualizar la red
     G = nx.Graph(binary)
     pos = nx.spring_layout(G)
 
-    # Define los colores de los nodos según la consulta
-    node_colors = (['red'] * red_count) + (['blue'] * blue_count) + (['green'] * green_count)
-
-    nx.draw_networkx_nodes(G, pos, node_color=node_colors, node_size=100, cmap=plt.get_cmap('jet'))
+    nx.draw_networkx_nodes(G, pos, node_color=node_colors, node_size=100)
     nx.draw_networkx_edges(G, pos, alpha=0.5)
+    labels = {i: df.loc[i, 'title'] for i in range(len(df))}
+    nx.draw_networkx_labels(G, pos, labels, font_size=8)
     plt.show()
 
 def generate_color_dict(red_count, blue_count, green_count):
@@ -235,7 +244,86 @@ def generate_color_dict(red_count, blue_count, green_count):
         color_dict['nanowire networks'] = 'green'
     return color_dict
 
-def process_queries(queries: dict, thresh=0.1, debug=False):
+def plot_interactive_networkx(similarity_matrix, df, queries):
+    """
+    Visualiza una matriz de similitud como un gráfico de red interactivo utilizando Plotly.
+    
+    Args:
+        similarity_matrix (array): Matriz de similitud.
+        df (DataFrame): DataFrame con registros de artículos académicos.
+        queries (dict): Diccionario de consultas con la cantidad de resultados deseados.
+    """
+    # Convert the similarity matrix to a numpy array if it's not already one
+    similarity_array = np.array(similarity_matrix)
+    
+    # Create the graph from a numpy array
+    G = nx.from_numpy_array(similarity_array)
+    pos = nx.spring_layout(G)
+
+    # Crear trazas de nodos y aristas
+    edge_x = []
+    edge_y = []
+    for edge in G.edges():
+        x0, y0 = pos[edge[0]]
+        x1, y1 = pos[edge[1]]
+        edge_x.extend([x0, x1, None])
+        edge_y.extend([y0, y1, None])
+
+    edge_trace = go.Scatter(
+        x=edge_x, y=edge_y,
+        line=dict(width=0.5, color='#888'),
+        hoverinfo='none',
+        mode='lines')
+
+    node_x = []
+    node_y = []
+    node_text = []
+    for node in G.nodes():
+        x, y = pos[node]
+        node_x.append(x)
+        node_y.append(y)
+        node_text.append(df.loc[node, 'title'])
+
+    node_trace = go.Scatter(
+        x=node_x, y=node_y, text=node_text,
+        mode='markers', hoverinfo='text',
+        marker=dict(
+            showscale=True,
+            colorscale='YlGnBu',
+            size=10,
+            color=[],
+            colorbar=dict(
+                thickness=15,
+                title='Node Connections',
+                xanchor='left',
+                titleside='right'
+            ),
+            line_width=2))
+
+    # Color de los nodos basado en el número de conexiones
+    node_adjacencies = []
+    node_color = []
+    for node, adjacencies in enumerate(G.adjacency()):
+        node_adjacencies.append(len(adjacencies[1]))
+        node_color.append(len(adjacencies[1]))
+
+    node_trace.marker.color = node_color
+
+    # Crear la figura
+    fig = go.Figure(data=[edge_trace, node_trace],
+                    layout=go.Layout(
+                        title='<br>Red de artículos interactiva con colores uniformes',
+                        titlefont_size=16,
+                        showlegend=False,
+                        hovermode='closest',
+                        margin=dict(b=20,l=5,r=5,t=40),
+                        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+                        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False))
+                    )
+    
+    fig.show()
+
+def process_queries(queries: dict, thresh=0.25, debug=False):
     """
     Procesa consultas, obtiene datos de artículos, calcula la similitud y visualiza los resultados.
 
@@ -251,20 +339,23 @@ def process_queries(queries: dict, thresh=0.1, debug=False):
     records = procesar_datos_semantic_scholar(papers)
     df = pd.DataFrame(records)
     similarity_matrix = calculate_similarity(df)
+    np.fill_diagonal(similarity_matrix, 0)
     if debug:
         print(similarity_matrix)
+    plot_interactive_networkx(similarity_matrix, df, queries)
     binary = threshold_similarity_matrix(similarity_matrix, thresh)
 
     np.fill_diagonal(binary, 0)
     if debug:
         print(binary)
-    plot_binary_matrix_networkx(binary)
+    plot_binary_matrix_networkx(binary, df, queries)
+    plot_interactive_networkx(binary, df, queries)
 
 # Ejemplo de consultas
 queries = {
-    "Forward-Forward Algorithm": 60,
-    "gaussian splatting": 60,
-    "unsupervised learning": 60
+    "Forward-Forward Algorithm": 80,
+    "gaussian splatting": 80,
+    "unsupervised learning": 80
 }
 
 # Procesar las consultas
