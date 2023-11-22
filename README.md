@@ -44,9 +44,3 @@ Este proyecto está bajo la Licencia MIT. Consulte el archivo [LICENSE](LICENSE.
 **Nota:** Asegúrese de seguir las políticas de uso de la API de Semantic Scholar al realizar consultas.
 
 ```
-
-**Licencia MIT**
-
-El texto en inglés anterior es el README en formato Markdown para el proyecto. La Licencia MIT es una licencia de software de código abierto que permite a los usuarios utilizar, modificar y distribuir el código con ciertas restricciones y sin garantías. Es una licencia ampliamente utilizada en la comunidad de desarrollo de software de código abierto.
-
-Es importante mencionar que la licencia se aplica al código fuente del proyecto, y los usuarios deben respetar sus términos y condiciones al utilizarlo. El README también proporciona instrucciones sobre cómo utilizar el proyecto y menciona las bibliotecas requeridas.
