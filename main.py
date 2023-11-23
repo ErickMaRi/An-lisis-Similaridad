@@ -11,9 +11,18 @@ import plotly.graph_objects as go
 import matplotlib.cm as cm
 import plotly.graph_objs as go
 import networkx as nx
+import random
 
-# Nombre del archivo de caché
-cache_file = "papers_cache.json"
+used_ids = set()  # This set will keep track of all IDs to prevent collisions.
+cache_file = "papers_cache.json" # Nombre del archivo de caché
+
+def generate_unique_id(existing_ids, real_id_length):
+    while True:
+        # Generate a long integer ID by concatenating random digits to double the size of a real ID.
+        fake_id = ''.join(str(random.randint(0, 9)) for _ in range(real_id_length * 2))
+        # Ensure the fake ID hasn't already been used.
+        if fake_id not in existing_ids:
+            return fake_id
 
 def load_cache():
     """
@@ -62,13 +71,15 @@ def get_paper_data_from_cache(paper_id):
 def get_semantic_scholar_data(paper_ids, debug=False):
     """
     Obtiene datos de artículos académicos desde la API de Semantic Scholar.
-
+ 
     Args:
         paper_ids (list): Lista de identificadores únicos de artículos académicos.
 
     Returns:
         list: Lista de datos de artículos académicos.
     """
+    global used_ids
+    real_id_length = 40  
     base_url = "https://api.semanticscholar.org/v1/paper"
     headers = {'User-Agent': 'MiAplicacionDeInvestigacion/1.0 (erick.marinrojas@ucr.ac.cr)'}
     papers = []
@@ -86,8 +97,18 @@ def get_semantic_scholar_data(paper_ids, debug=False):
             response = requests.get(f"{base_url}/{paper_id}", headers=headers)
             if response.status_code == 200:
                 paper_data = response.json()
-                save_to_cache(paper_id, paper_data)
-                papers.append(paper_data)
+                # Only save to cache if a paperId is present
+                if 'paperId' in paper_data and paper_data['paperId'] not in used_ids:
+                    used_ids.add(paper_data['paperId'])
+                    save_to_cache(paper_id, paper_data)
+                    papers.append(paper_data)
+                else:
+                    # Generate a unique fake paperId that is double the size of a real ID
+                    fake_paper_id = generate_unique_id(used_ids, real_id_length)
+                    used_ids.add(fake_paper_id)  # Add the fake ID to the used IDs set
+                    paper_data['paperId'] = fake_paper_id  # Assign the fake ID
+                    save_to_cache(fake_paper_id, paper_data)
+                    papers.append(paper_data)
             else:
                 if debug:
                     print(f"#{iter}-Error al obtener el artículo {paper_id}: {response.text}")
@@ -109,7 +130,7 @@ def search_semantic_scholar(query, max_results=5):
     params = {
         "query": query,
         "limit": max_results,
-        "fields": "paperId,title,authors,references"
+        "fields": "paperId"
     }
     response = requests.get(base_search_url, headers=headers, params=params)
     if response.status_code == 200:
@@ -138,6 +159,7 @@ def procesar_datos_semantic_scholar(papers):
             'authors': [author['name'] if isinstance(author, dict) else author for author in paper.get('authors', [])],
             'references': [ref['paperId'] if isinstance(ref, dict) else ref for ref in paper.get('references', [])]
         }
+        
         registros.append(registro)
     return registros
 
@@ -193,30 +215,29 @@ def threshold_similarity_matrix(similarity_matrix, threshold):
     binary_matrix[similarity_matrix > threshold] = 1
     return binary_matrix
 
-def plot_binary_matrix_networkx(binary, df, queries):
-    """
-    Visualiza una matriz binaria como un gráfico de red utilizando NetworkX.
-    
-    Args:
-        binary (array): Matriz binaria.
-        df (DataFrame): DataFrame con registros de artículos académicos.
-        queries (dict): Diccionario de consultas con la cantidad de resultados deseados.
-    """
+def plot_binary_matrix_networkx(binary, df, id_to_query_map):
     # Generar colores
-    n_queries = len(queries)
+    unique_queries = list(set(id_to_query_map.values()))
+    n_queries = len(unique_queries)
     colors = cm.rainbow(np.linspace(0, 1, n_queries))
-    
-    # Asignar colores a los nodos
+
+    # Crear un mapeo de consultas a colores
+    query_to_color = {query: colors[i] for i, query in enumerate(unique_queries)}
+    default_color = 'grey'  # Color por defecto para IDs no mapeados
+
+    # Asignar colores a los nodos basados en su consulta de origen
     node_colors = []
-    current_index = 0
-    for i, (query, count) in enumerate(queries.items()):
-        node_colors += [colors[i]] * count
-        current_index += count
+    for idx in range(len(df)):
+        paper_id = df.loc[idx, 'id']
+        query = id_to_query_map.get(paper_id)
+        if query:
+            node_colors.append(query_to_color[query])
+        else:
+            node_colors.append(default_color)  # Usar color por defecto
 
     # Crear y visualizar la red
     G = nx.Graph(binary)
     pos = nx.spring_layout(G)
-
     nx.draw_networkx_nodes(G, pos, node_color=node_colors, node_size=100)
     nx.draw_networkx_edges(G, pos, alpha=0.5)
     labels = {i: df.loc[i, 'title'] for i in range(len(df))}
@@ -244,25 +265,27 @@ def generate_color_dict(red_count, blue_count, green_count):
         color_dict['nanowire networks'] = 'green'
     return color_dict
 
-def plot_interactive_networkx(similarity_matrix, df, queries):
+def plot_interactive_networkx(similarity_matrix, df, id_to_query_map, paper_ids):
     """
     Visualiza una matriz de similitud como un gráfico de red interactivo utilizando Plotly.
     
     Args:
-        similarity_matrix (array): Matriz de similitud.
+        binary (array): Matriz binaria.
         df (DataFrame): DataFrame con registros de artículos académicos.
-        queries (dict): Diccionario de consultas con la cantidad de resultados deseados.
+        id_to_query_map (dict): Diccionario mapeando los IDs de los artículos a sus respectivas consultas.
     """
-    # Convert the similarity matrix to a numpy array if it's not already one
-    similarity_array = np.array(similarity_matrix)
+    # Convertir la matriz de similitud en un grafo y obtener la posición de los nodos
+    G = nx.from_numpy_array(similarity_matrix)
     
-    # Create the graph from a numpy array
-    G = nx.from_numpy_array(similarity_array)
-    pos = nx.spring_layout(G)
+    # Identificar los componentes conectados y filtrar los nodos no conectados
+    connected_components = list(nx.connected_components(G))
+    # Podemos decidir qué componentes mantener (por ejemplo, aquellos con más de 1 nodo)
+    nodes_to_keep = {node for component in connected_components for node in component if len(component) > 1}
+    # Creamos un subgrafo solo con los nodos conectados
+    G = G.subgraph(nodes_to_keep).copy()
+    pos = nx.spring_layout(G)  # Puede necesitar reajuste dado que se han eliminado nodos
 
-    # Crear trazas de nodos y aristas
-    edge_x = []
-    edge_y = []
+    edge_x, edge_y = [], []
     for edge in G.edges():
         x0, y0 = pos[edge[0]]
         x1, y1 = pos[edge[1]]
@@ -275,88 +298,117 @@ def plot_interactive_networkx(similarity_matrix, df, queries):
         hoverinfo='none',
         mode='lines')
 
-    node_x = []
-    node_y = []
-    node_text = []
+    node_x, node_y, node_text, node_symbols, node_colors_by_query, node_colors_by_connectivity = [], [], [], [], [], []
+    shapes = ['triangle-up', 'square', 'cross', 'diamond', 'circle', 'star', 'hexagon', 'pentagon']
+    unique_queries = set(id_to_query_map.values())
+    colors = cm.rainbow(np.linspace(0, 1, len(unique_queries)))
+    query_shapes = {query: shapes[i % len(shapes)] for i, query in enumerate(unique_queries)}
+    query_to_color = {query: colors[i] for i, query in enumerate(unique_queries)}
+
+    # Color y forma por defecto
+    default_color = 'rgba(150,150,150,0.5)'
+    default_shape = 'circle'
+    print(df)
+    real_id_length = 17  # Assuming real paperIds are 17 digits long
     for node in G.nodes():
-        x, y = pos[node]
-        node_x.append(x)
-        node_y.append(y)
+        paper_id = paper_ids[int(node)]
+        if paper_id is None:
+            # If there's a None value, generate a fake ID and replace it
+            fake_paper_id = generate_unique_id(used_ids, real_id_length)
+            used_ids.add(fake_paper_id)
+            df.at[node, 'id'] = fake_paper_id  # Update the DataFrame with the fake ID
+            paper_id = fake_paper_id  # Use the new fake ID
+        query = id_to_query_map.get(paper_id, None)
+        print(f'node is: {node}, and paper id is: {paper_id}.') # Usar None como valor por defecto si no se encuentra el paper_id
+        node_x.append(pos[node][0])
+        node_y.append(pos[node][1])
         node_text.append(df.loc[node, 'title'])
-
-    node_trace = go.Scatter(
-        x=node_x, y=node_y, text=node_text,
-        mode='markers', hoverinfo='text',
-        marker=dict(
-            showscale=True,
-            colorscale='YlGnBu',
-            size=10,
-            color=[],
-            colorbar=dict(
-                thickness=15,
-                title='Node Connections',
-                xanchor='left',
-                titleside='right'
-            ),
-            line_width=2))
-
-    # Color de los nodos basado en el número de conexiones
-    node_adjacencies = []
-    node_color = []
-    for node, adjacencies in enumerate(G.adjacency()):
-        node_adjacencies.append(len(adjacencies[1]))
-        node_color.append(len(adjacencies[1]))
-
-    node_trace.marker.color = node_color
-
-    # Crear la figura
-    fig = go.Figure(data=[edge_trace, node_trace],
-                    layout=go.Layout(
-                        title='<br>Red de artículos interactiva con colores uniformes',
-                        titlefont_size=16,
-                        showlegend=False,
-                        hovermode='closest',
-                        margin=dict(b=20,l=5,r=5,t=40),
-                        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-                        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False))
-                    )
+        node_symbols.append(query_shapes.get(query, default_shape))
+        print(query_shapes.get(query, default_shape))
+        node_colors_by_query.append(
+            'rgba({}, {}, {}, 0.8)'.format(
+                *map(lambda x: int(x*255), query_to_color.get(query, (0.6, 0.6, 0.6)))
+            ) if query is not None else default_color
+        )
+        node_colors_by_connectivity.append(len(list(G.adj[node])))
     
+    node_trace_by_query = go.Scatter(
+        x=node_x, y=node_y, text=node_text, mode='markers', hoverinfo='text',
+        marker=dict(
+            size=10,
+            color=node_colors_by_query,
+            symbol=node_symbols
+        )
+    )
+    
+    node_trace_by_connectivity = go.Scatter(
+        x=node_x, y=node_y, mode='markers', hoverinfo='text',
+        marker=dict(
+            size=10,
+            color=node_colors_by_connectivity, 
+            colorscale='Viridis', 
+            showscale=True,
+            symbol=node_symbols
+        )
+    )
+    
+    fig = go.Figure(data=[edge_trace, node_trace_by_query, node_trace_by_connectivity], layout=go.Layout(
+        title='Red de artículos interactiva',
+        showlegend=True,
+        hovermode='closest',
+        margin=dict(b=20,l=5,r=5,t=40),
+        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False)
+    ))
+
+    for query, shape in query_shapes.items():
+        fig.add_trace(go.Scatter(
+            x=[None], y=[None], mode='markers',
+            marker_symbol=shape,
+            marker=dict(
+                size=10, 
+                color='rgba({}, {}, {}, 0.8)'.format(*map(lambda x: int(x*255), query_to_color[query]))
+            ),
+            name=query
+        ))
+
     fig.show()
 
+
 def process_queries(queries: dict, thresh=0.25, debug=False):
-    """
-    Procesa consultas, obtiene datos de artículos, calcula la similitud y visualiza los resultados.
+    
+    paper_ids_set = set()
+    paper_ids_ordered = []
+    id_to_query_map = {}  # Nuevo diccionario para mapear IDs a consultas
 
-    Args:
-        queries (dict): Diccionario de consultas con la cantidad de resultados deseados.
-        thresh (float): Umbral para la binarización de la matriz de similitud.
-    """
-    paper_ids = []
     for query, count in queries.items():
-        paper_ids += search_semantic_scholar(query, max_results=count)
+        current_paper_ids = search_semantic_scholar(query, max_results=count)
+        for paper_id in current_paper_ids:
+            if paper_id not in paper_ids_set:
+                paper_ids_set.add(paper_id)
+                paper_ids_ordered.append(paper_id)
+                id_to_query_map[paper_id] = query  # Mapear el ID al query
 
-    papers = get_semantic_scholar_data(paper_ids, debug)
+    print(f'id to query map: {id_to_query_map}')
+
+    papers = get_semantic_scholar_data(paper_ids_ordered, debug)
     records = procesar_datos_semantic_scholar(papers)
     df = pd.DataFrame(records)
     similarity_matrix = calculate_similarity(df)
     np.fill_diagonal(similarity_matrix, 0)
     if debug:
-        print(similarity_matrix)
-    plot_interactive_networkx(similarity_matrix, df, queries)
-    binary = threshold_similarity_matrix(similarity_matrix, thresh)
+        print(df)
 
+    binary = threshold_similarity_matrix(similarity_matrix, thresh)
     np.fill_diagonal(binary, 0)
     if debug:
         print(binary)
-    plot_binary_matrix_networkx(binary, df, queries)
-    plot_interactive_networkx(binary, df, queries)
+    plot_interactive_networkx(binary, df, id_to_query_map, paper_ids_ordered)  # Pasar el mapeo a la función
+    plot_interactive_graph(binary)
 
 # Ejemplo de consultas
-queries = {
-    "Forward-Forward Algorithm": 80,
-    "gaussian splatting": 80,
-    "unsupervised learning": 80
-}
+queries = { #Máximo 100 resultados por query!!!!
+    "Economy, Costa Rica": 80, "Economy, Nicaragua": 80, "Economy, El Salvador": 80, "Economy, Panamá": 80, "Economy, Honduras": 80, "Economy, Colombia": 80}
 
 # Procesar las consultas
 process_queries(queries, debug=True)
