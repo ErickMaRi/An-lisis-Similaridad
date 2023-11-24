@@ -12,6 +12,7 @@ import matplotlib.cm as cm
 import plotly.graph_objs as go
 import networkx as nx
 import random
+from scipy.stats import entropy
 
 used_ids = set()  # This set will keep track of all IDs to prevent collisions.
 cache_file = "papers_cache.json" # Nombre del archivo de caché
@@ -200,17 +201,82 @@ def plot_interactive_graph(similarity_matrix):
     fig.update_layout(title='Gráfico Interactivo de Matriz de Similitud')
     fig.show()
 
-def threshold_similarity_matrix(similarity_matrix, threshold):
+def evaluate_network(G):
     """
-    Convierte una matriz de similitud en una matriz binaria basada en un umbral.
+    Evalúa la calidad de la red enfocándose en la diversidad de la dimensionalidad aparente local de los nodos.
+
+    Args:
+        G (Graph): Grafo de NetworkX.
+
+    Returns:
+        float: Puntaje de calidad de la red.
+    """
+    avg_clustering = nx.average_clustering(G)
+    degrees = np.array([degree for _, degree in G.degree()])
+    degree_entropy = entropy(degrees + 1)  # Agregamos 1 para evitar el logaritmo de 0
+    degree_variation_coefficient = np.std(degrees) / np.mean(degrees) if np.mean(degrees) > 0 else 0
+    network_density = nx.density(G)
+
+    # Definir pesos para cada factor (estos valores pueden ser ajustados)
+    weight_clustering = 0
+    weight_entropy = 0  # Peso para la entropía de la distribución de grados
+    weight_variation_coefficient = -1.2/1.2803997096318764  # Peso para el coeficiente de variación de grados
+    weight_density = -0.4/0.03837781181972103
+
+    # Calcular el puntaje final, incorporando las nuevas métricas
+    score = -1/(weight_clustering * avg_clustering +
+             weight_entropy * degree_entropy +
+             weight_variation_coefficient * degree_variation_coefficient +
+             weight_density * network_density)
+    #print(f'score: {score} = {1 * avg_clustering, 1 * degree_entropy, weight_variation_coefficient * degree_variation_coefficient, weight_density * network_density}')
+    return score
+
+def find_optimal_threshold(similarity_matrix, debug=False, min_threshold=0.001, max_threshold=0.5, step=0.001):
+    """
+    Encuentra el umbral óptimo para la matriz de similitud.
 
     Args:
         similarity_matrix (array): Matriz de similitud.
-        threshold (float): Umbral para la binarización.
+        min_threshold (float): Umbral mínimo a considerar.
+        max_threshold (float): Umbral máximo a considerar.
+        step (float): Paso entre umbrales consecutivos.
+
+    Returns:
+        float: Umbral óptimo encontrado.
+    """
+    best_threshold = min_threshold
+    best_score = -1
+
+    for threshold in np.arange(min_threshold, max_threshold, step):
+        binary_matrix = np.zeros_like(similarity_matrix)
+        binary_matrix[similarity_matrix > threshold] = 1
+        G = nx.from_numpy_array(binary_matrix)
+
+        score = evaluate_network(G)
+
+        if score > best_score:
+            best_score = score
+            best_threshold = threshold
+    if debug:
+        print(f'Best threshold is: {best_threshold}, with a score of: {best_score}.')
+    return best_threshold
+
+def threshold_similarity_matrix(similarity_matrix, threshold='auto', debug=False):
+    """
+    Convierte una matriz de similitud en una matriz binaria basada en un umbral, densidad, o de forma autónoma.
+
+    Args:
+        similarity_matrix (array): Matriz de similitud.
+        threshold (float, str): Umbral para la binarización, 'densidad', o 'auto'.
+        density_percentage (int): Porcentaje de conexiones más fuertes a mantener si se utiliza 'densidad'.
 
     Returns:
         array: Matriz binaria.
     """
+    if threshold == 'auto':
+        threshold = find_optimal_threshold(similarity_matrix, debug=debug)
+    
+    # Crear la matriz binaria
     binary_matrix = np.zeros_like(similarity_matrix)
     binary_matrix[similarity_matrix > threshold] = 1
     return binary_matrix
@@ -308,7 +374,7 @@ def plot_interactive_networkx(similarity_matrix, df, id_to_query_map, paper_ids)
     # Color y forma por defecto
     default_color = 'rgba(150,150,150,0.5)'
     default_shape = 'circle'
-    print(df)
+    #print(df)
     real_id_length = 17  # Assuming real paperIds are 17 digits long
     for node in G.nodes():
         paper_id = paper_ids[int(node)]
@@ -319,12 +385,11 @@ def plot_interactive_networkx(similarity_matrix, df, id_to_query_map, paper_ids)
             df.at[node, 'id'] = fake_paper_id  # Update the DataFrame with the fake ID
             paper_id = fake_paper_id  # Use the new fake ID
         query = id_to_query_map.get(paper_id, None)
-        print(f'node is: {node}, and paper id is: {paper_id}.') # Usar None como valor por defecto si no se encuentra el paper_id
+        #print(f'node is: {node}, and paper id is: {paper_id}.')
         node_x.append(pos[node][0])
         node_y.append(pos[node][1])
         node_text.append(df.loc[node, 'title'])
         node_symbols.append(query_shapes.get(query, default_shape))
-        print(query_shapes.get(query, default_shape))
         node_colors_by_query.append(
             'rgba({}, {}, {}, 0.8)'.format(
                 *map(lambda x: int(x*255), query_to_color.get(query, (0.6, 0.6, 0.6)))
@@ -375,8 +440,16 @@ def plot_interactive_networkx(similarity_matrix, df, id_to_query_map, paper_ids)
     fig.show()
 
 
-def process_queries(queries: dict, thresh=0.25, debug=False):
+def process_queries(queries: dict, thresh="auto", debug=False):
+    '''
+    Procesa los queries, correlaciona los papers recogidos, los transforma
+    en una matriz binaria basado en el threshold, luego esa matriz de conexiones
+    se usa para dibujar una figura interactiva en el buscador para:
+        1- El grafo de la matriz binaria
+        2- La matriz binaria
+        3- El grafo de la matriz de similitud
     
+    '''
     paper_ids_set = set()
     paper_ids_ordered = []
     id_to_query_map = {}  # Nuevo diccionario para mapear IDs a consultas
@@ -389,7 +462,7 @@ def process_queries(queries: dict, thresh=0.25, debug=False):
                 paper_ids_ordered.append(paper_id)
                 id_to_query_map[paper_id] = query  # Mapear el ID al query
 
-    print(f'id to query map: {id_to_query_map}')
+    #print(f'id to query map: {id_to_query_map}')
 
     papers = get_semantic_scholar_data(paper_ids_ordered, debug)
     records = procesar_datos_semantic_scholar(papers)
@@ -399,16 +472,17 @@ def process_queries(queries: dict, thresh=0.25, debug=False):
     if debug:
         print(df)
 
-    binary = threshold_similarity_matrix(similarity_matrix, thresh)
+    binary = threshold_similarity_matrix(similarity_matrix, thresh, debug)
     np.fill_diagonal(binary, 0)
     if debug:
         print(binary)
     plot_interactive_networkx(binary, df, id_to_query_map, paper_ids_ordered)  # Pasar el mapeo a la función
     plot_interactive_graph(binary)
+    plot_interactive_networkx(similarity_matrix, df, id_to_query_map, paper_ids_ordered)
 
 # Ejemplo de consultas
 queries = { #Máximo 100 resultados por query!!!!
-    "Economy, Costa Rica": 80, "Economy, Nicaragua": 80, "Economy, El Salvador": 80, "Economy, Panamá": 80, "Economy, Honduras": 80, "Economy, Colombia": 80}
+    "Economy, Costa Rica": 90, "Guanacaste, Costa Rica": 90, "Economic growth of Costa Rica": 90, "Crecimiento económico en Costa Rica": 90}
 
 # Procesar las consultas
-process_queries(queries, debug=True)
+process_queries(queries, thresh="auto", debug=True)
