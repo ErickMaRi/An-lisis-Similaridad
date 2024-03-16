@@ -127,7 +127,7 @@ def search_semantic_scholar(query, max_results=5):
         list: Lista de identificadores únicos de artículos encontrados.
     """
     base_search_url = "https://api.semanticscholar.org/graph/v1/paper/search"
-    headers = {'User-Agent': 'MiAplicacionDeInvestigacion/1.0 (erick.marinrojas@ucr.ac.cr)'}
+    headers = {'User-Agent': 'elpepepipe'}
     params = {
         "query": query,
         "limit": max_results,
@@ -479,10 +479,11 @@ def process_queries(queries: dict, thresh="auto", debug=False):
     plot_interactive_networkx(binary, df, id_to_query_map, paper_ids_ordered)  # Pasar el mapeo a la función
     plot_interactive_graph(binary)
     plot_interactive_networkx(similarity_matrix, df, id_to_query_map, paper_ids_ordered)
+    plot_interactive_graph(similarity_matrix)
 
 # Ejemplo de consultas
-queries = { #Máximo 100 resultados por query!!!!
-    "Economy, Costa Rica": 90, "Guanacaste, Costa Rica": 90, "Economic growth of Costa Rica": 90, "Crecimiento económico en Costa Rica": 90}
+queries = { #Máximo 45 resultados por query!!!!
+    "CONDA architechture":45, "LSTM architecture": 45}
 
 # Procesar las consultas
 process_queries(queries, thresh="auto", debug=True)
