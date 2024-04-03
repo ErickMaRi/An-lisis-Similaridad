@@ -493,4 +493,85 @@ queries = { #Máximo 45 resultados por query!!!!
         }
 
 # Procesar las consultas
-process_queries(queries, thresh="auto", debug=True)
+# process_queries(queries, thresh="auto", debug=True) # main comentado
+
+
+###########
+###TEST####
+###########
+
+import pandas as pd
+import networkx as nx
+from nltk.corpus import stopwords
+from nltk.tokenize import word_tokenize
+from nltk.stem import PorterStemmer
+from gensim import corpora, models
+
+# Clase para el análisis de co-autoría
+class CoAuthorshipAnalysis:
+   def __init__(self, data_frame):
+       self.data_frame = data_frame
+       self.author_graph = None
+
+   def build_author_graph(self):
+       self.author_graph = nx.Graph()
+       for index, row in self.data_frame.iterrows():
+           authors = row['authors']
+           for author1 in authors:
+               for author2 in authors:
+                   if author1 != author2:
+                       self.author_graph.add_edge(author1, author2)
+
+   def find_communities(self):
+       self.communities = list(nx.algorithms.community.greedy_modularity_communities(self.author_graph))
+
+   def visualize_author_network(self):
+       pos = nx.spring_layout(self.author_graph)
+       colors = ['r', 'g', 'b', 'c', 'm', 'y', 'k']
+       for i, community in enumerate(self.communities):
+           color = colors[i % len(colors)]
+           nx.draw_networkx_nodes(self.author_graph, pos, nodelist=community, node_color=color)
+       nx.draw_networkx_edges(self.author_graph, pos)
+       plt.show()
+
+# Clase para el análisis de temas
+class TopicAnalysis:
+   def __init__(self, data_frame):
+       self.data_frame = data_frame
+       self.topic_model = None
+
+   def preprocess_text(self):
+       stop_words = set(stopwords.words('english'))
+       stemmer = PorterStemmer()
+       texts = []
+       for index, row in self.data_frame.iterrows():
+           title = row['title']
+           tokens = word_tokenize(title.lower())
+           tokens = [stemmer.stem(token) for token in tokens if token not in stop_words]
+           texts.append(tokens)
+       self.dictionary = corpora.Dictionary(texts)
+       self.corpus = [self.dictionary.doc2bow(text) for text in texts]
+
+   def train_topic_model(self, num_topics=10):
+       self.topic_model = models.LdaMulticore(self.corpus, num_topics=num_topics, id2word=self.dictionary)
+
+   def analyze_topics(self):
+       self.topics = self.topic_model.print_topics()
+
+   def visualize_topics(self):
+       from pyLDAvis import gensim as gensim_vis
+       vis = gensim_vis.prepare(self.topic_model, self.corpus, self.dictionary)
+       vis.display()
+
+# Uso de las clases
+df = pd.DataFrame(registros)
+coauthorship_analysis = CoAuthorshipAnalysis(df)
+coauthorship_analysis.build_author_graph()
+coauthorship_analysis.find_communities()
+coauthorship_analysis.visualize_author_network()
+
+topic_analysis = TopicAnalysis(df)
+topic_analysis.preprocess_text()
+topic_analysis.train_topic_model()
+topic_analysis.analyze_topics()
+topic_analysis.visualize_topics()
