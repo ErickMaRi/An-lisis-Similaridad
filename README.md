@@ -24,8 +24,6 @@ pip install requests
 pip install pandas
 pip install numpy
 pip install scikit-learn
-pip install json
-pip install os
 pip install matplotlib
 pip install plotly
 pip install networkx
