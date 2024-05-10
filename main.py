@@ -1,4 +1,5 @@
 # Importación de bibliotecas
+import time
 import requests
 import pandas as pd
 import numpy as np
@@ -126,6 +127,8 @@ def search_semantic_scholar(query, max_results=5):
     Returns:
         list: Lista de identificadores únicos de artículos encontrados.
     """
+    wait_time = random.uniform(1, 2)
+    time.sleep(wait_time)
     base_search_url = "https://api.semanticscholar.org/graph/v1/paper/search"
     headers = {'User-Agent': 'elpepepipe'}
     params = {
@@ -407,9 +410,12 @@ def plot_interactive_networkx(similarity_matrix, df, id_to_query_map, paper_ids)
         x=node_x, y=node_y, text=node_text, mode='markers', hoverinfo='text',
         marker=dict(
             size=10,
-            color=node_colors_by_query,
+            color=node_colors_by_connectivity,  # Color by connectivity
+            colorscale='Viridis',
+            showscale=True,
             symbol=node_symbols
-        )
+        ),
+        customdata=[df.loc[i, 'title'] for i in range(len(df))]  # List of paper titles for hovertext
     )
     
     node_trace_by_connectivity = go.Scatter(
@@ -461,6 +467,7 @@ def process_queries(queries: dict, thresh="auto", debug=False):
     id_to_query_map = {}  # Nuevo diccionario para mapear IDs a consultas
 
     for query, count in queries.items():
+        
         current_paper_ids = search_semantic_scholar(query, max_results=count)
         for paper_id in current_paper_ids:
             if paper_id not in paper_ids_set:
@@ -489,8 +496,70 @@ def process_queries(queries: dict, thresh="auto", debug=False):
 
 # Ejemplo de consultas
 queries = { #Máximo 45 resultados por query!!!!
-    "CONDA architechture":45, "LSTM architecture": 45, "ASICs AI machine learning": 45, "Single bit Machine Learning": 45
+    "CONDA architechture":45, "Forward-Forward Network": 45, "FPGA AI": 45, "BitNet": 45
         }
 
 # Procesar las consultas
-process_queries(queries, thresh="auto", debug=True)
+# process_queries(queries, thresh="auto", debug=True)
+
+import matplotlib.pyplot as plt
+import numpy as np
+from collections import defaultdict
+from sklearn.metrics.pairwise import cosine_similarity
+import plotly.graph_objects as go
+import networkx as nx
+
+def load_cache_and_correlate_papers(debug=False):
+  """
+  Lee datos del caché, correlaciona artículos y genera gráficos.
+
+  Args:
+      debug (bool): Indica si se debe mostrar información de depuración.
+
+  Returns:
+      None
+  """
+
+  # Diccionario para almacenar los registros de artículos (en caché)
+  paper_records = defaultdict(dict)
+
+  # Leer datos del caché
+  if os.path.exists(cache_file):
+    with open(cache_file, "r") as file:
+      cached_data = json.load(file)
+      for paper_id, data in cached_data.items():
+        paper_records[paper_id] = data
+
+  # Comprobar si hay datos en caché
+  if not paper_records:
+    print("No hay datos en el caché. Se requiere una búsqueda inicial para construir el grafo.")
+    return
+
+  # Extraer registros de artículos del caché
+  all_paper_ids = list(paper_records.keys())
+  df = pd.DataFrame(paper_records.values())
+
+  # Calcular la matriz de similitud basada en referencias compartidas
+  similarity_matrix = calculate_similarity(df, debug=debug)
+  np.fill_diagonal(similarity_matrix, 0)  # Evitar auto-referencias
+
+  # Encontrar el mejor umbral
+  best_threshold = find_optimal_threshold(similarity_matrix, debug=debug)
+  if debug:
+      print(f"Mejor umbral: {best_threshold}")
+
+  # Crear la red a partir de la matriz de similitud binaria con el umbral óptimo
+  binary_matrix = threshold_similarity_matrix(similarity_matrix, threshold=best_threshold, debug=debug)
+  G = nx.from_numpy_array(binary_matrix)
+
+  # Generar gráficos (similar al estilo de process_queries)
+  plot_interactive_graph(binary_matrix)
+
+  # Since id_to_query_map wasn't created here, pass an empty dictionary
+  plot_interactive_networkx(binary_matrix, df, {}, all_paper_ids)
+
+  plot_interactive_networkx(similarity_matrix, df, {}, all_paper_ids)  # Corregido: incluye paper_ids
+  plot_interactive_graph(similarity_matrix)
+
+# Ejemplo de uso
+load_cache_and_correlate_papers(debug=True)
